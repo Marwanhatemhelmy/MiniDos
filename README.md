@@ -7,7 +7,7 @@
 
 **3)** supports multiple drivers, not only the `C` driver
 ## Functions
-**1)** loading, wirting, deleting, renaming files, as well as copying files from any driver to any driver
+`loading`, `wirting`, `deleting`, `renaming files`, as well as `copying files` from any driver to any driver & `alternating between drivers`
 
 ## Ram Structure
 #### All addresses are physical addresses
