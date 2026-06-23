@@ -56,30 +56,33 @@ inumber_of_bytes_per_cluster : equ 0x0D
 
 ; advanced fat16 routines
 ifat_entry_value : equ 0x10
-iset_fat_entry_value : equ 0x11
-ifile_root_directory_entry : equ 0x12
-iload_file_with_cluster_number : equ 0x13
-iload_file : equ 0x14
-idelete_root_dir_entry : equ 0x15
-idelete_cluster_chain : equ 0x16
-idelete_file : equ 0x17
-ifind_free_root_dir_entry : equ 0x18
-iset_root_dir_entry_file_name : equ 0x19
-iset_root_dir_entry_starting_cluster_number : equ 0x1A
-ireserve_free_cluster_chain : equ 0x1B
-iwrite_cluster_data : equ 0x1C
-isave_file : equ 0x1D
-icopy_file : equ 0x1E
+ilast_fat_entry_in_cluster_chain : equ 0x11
+iset_fat_entry_value : equ 0x12
+ifile_root_directory_entry : equ 0x13
+iset_root_dir_entry_file_name : equ 0x14
+iset_root_dir_entry_starting_cluster_number : equ 0x15
+iload_file_with_cluster_number : equ 0x16
+iload_file : equ 0x17
+idelete_root_dir_entry : equ 0x18
+idelete_cluster_chain : equ 0x19
+idelete_file : equ 0x1A
+ifind_free_root_dir_entry : equ 0x1B
+iexpand_cluster_chain : equ 0x1C
+ishrink_cluster_chain : equ 0x1D
+ireserve_free_cluster_chain : equ 0x1E
+iwrite_cluster_data : equ 0x1F
+isave_file_changes : equ 0x20
+icopy_file : equ 0x21
 
 ; additional routines
-iexit_to_cmd : equ 0x1F
-ichange_driver_number : equ 0x20
-iget_current_driver_number : equ 0x21
-isize_betwenn_segments : equ 0x22
-icheck_driver_availability : equ 0x23
-ifile_size_on_driver_in_sectors : equ 0x24
-idevice_power_off : equ 0x25
-iload_root_dir_at_reserved_segment : equ 0x26
+iexit_to_cmd : equ 0x22
+ichange_driver_number : equ 0x23
+iget_current_driver_number : equ 0x24
+isize_betwenn_segments : equ 0x25
+icheck_driver_availability : equ 0x26
+ifile_size_on_driver_in_sectors : equ 0x27
+idevice_power_off : equ 0x28
+iload_root_dir_at_reserved_segment : equ 0x29
 
 handlers:
 
@@ -119,10 +122,16 @@ handlers:
     ; advanced fat16 routines
     cmp ah, ifat_entry_value
     je fat_entry_value
+    cmp ah, ilast_fat_entry_in_cluster_chain
+    je last_fat_entry_in_cluster_chain
     cmp ah, iset_fat_entry_value
     je set_fat_entry_value
     cmp ah, ifile_root_directory_entry
     je file_root_directory_entry
+    cmp ah, iset_root_dir_entry_file_name
+    je set_root_dir_entry_file_name
+    cmp ah, iset_root_dir_entry_starting_cluster_number
+    je set_root_dir_entry_starting_cluster_number
     cmp ah, iload_file_with_cluster_number
     je load_file_with_cluster_number
     cmp ah, iload_file
@@ -135,16 +144,16 @@ handlers:
     je delete_file
     cmp ah, ifind_free_root_dir_entry
     je find_free_root_dir_entry
-    cmp ah, iset_root_dir_entry_file_name
-    je set_root_dir_entry_file_name
-    cmp ah, iset_root_dir_entry_starting_cluster_number
-    je set_root_dir_entry_starting_cluster_number
+    cmp ah, iexpand_cluster_chain
+    je expand_cluster_chain
+    cmp ah, ishrink_cluster_chain
+    je shrink_cluster_chain
     cmp ah, ireserve_free_cluster_chain
     je reserve_free_cluster_chain
     cmp ah, iwrite_cluster_data
     je write_cluster_data
-    cmp ah, isave_file
-    je save_file
+    cmp ah, isave_file_changes
+    je save_file_changes
     cmp ah, icopy_file
     je copy_file
 
@@ -411,6 +420,7 @@ number_of_bytes_per_cluster:
 ;args : [bx = fat enty index]
 fat_entry_value:
 
+    push dx
     push bx
     push di
     push fs
@@ -454,13 +464,31 @@ fat_entry_value:
     pop fs
     pop di
     pop bx
+    pop dx
 
     jmp ireturn
 
 ;function no. = 0x11
+;args : [bx = any fat entry index in the cluster chain]
+last_fat_entry_in_cluster_chain:
+    ; in case the cluster chain contains only one fat entry
+    mov cx, bx
+    mov dx, cx
+    .loop_fat_entries:
+        mov ah, ifat_entry_value
+        int 0x21
+        mov bx, ax ; bx = next fat entry index or 0xFFFF
+        cmp bx, 0xFFFF
+        je ireturn
+        mov dx, cx ; dx = previous fat entry index
+        mov cx, ax ; cx = next fat entry index
+        jmp .loop_fat_entries
+
+;function no. = 0x12
 ;args : [bx = fat entry index, cx = new value]
 set_fat_entry_value:
 
+    push dx
     push bx
     push di
     push fs
@@ -507,10 +535,11 @@ set_fat_entry_value:
     pop fs
     pop di
     pop bx
+    pop dx
 
     jmp ireturn
 
-;function no. = 0x12
+;function no. = 0x13
 ;args : [bx = address of file name]
 file_root_directory_entry:
     ; the fs & di registers are choosen for segment and offset as these registers are relatively neglectable
@@ -559,9 +588,13 @@ file_root_directory_entry:
 
             pop bx
 
+            push gs
+
             mov gs, ax
             mov ah, icompare_strings ; compare file name in the entry with the file name in the variable (command_file_string)
             int 0x21
+
+            pop gs
             
             cmp al, 0x01 ; al=1, if file name matched the string
             je .found_root_dir_entry
@@ -615,9 +648,139 @@ file_root_directory_entry:
 
         jmp ireturn  
 
+;function no. = 0x14
+;args : [bx = file name address, cx = sector number, dx = entry index in sector]
+set_root_dir_entry_file_name:
+
+    push fs
+    push di
+    push bx
+    push cx
+    push dx
+
+    mov ah, iending_root_dir_sector
+    int 0x21
+
+    add sp, 0x000A ; (10) in decimal, restore pushed registers
+    cmp cx, ax ; check if the root dir. entry sector number is in the root dir.
+    mov ax, 0x0000 ; indicating file name modification failed
+    jg ireturn
+    sub sp, 0x000A ; (10) in decimal
+
+    mov ah, inumber_of_entries_per_root_dir_sector
+    int 0x21
+
+    add sp, 0x000A ; (10) in decimal, restore pushed registers
+    cmp dx, ax ; check if the root dir. entry index is in any root dir. sector
+    mov ax, 0x0000 ; indicating file name modification failed
+    jg ireturn
+    sub sp, 0x000A ; (10) in decimal
+
+    mov word [dap_offset], reserved_offset
+    mov word [dap_segment], reserved_segment
+    mov word [dap_starting_sector], cx
+    mov word [dap_number_of_sectors], 0x0001
+
+    call read
+
+    mov ax, reserved_segment
+    mov fs, ax
+
+    pop dx
+    push dx
+
+    mov ax, 0x0020 ; (32) in decimal, cause every entry is 32 bytes in fat 16
+    mul dx ; dx now is a pointer to the string at the root dir. entry
+    mov dx, ax ; dx = the offset to fs to the beginning of the current entry
+    mov ax, 0x0000 ; string byte index
+
+    .loop_string_bytes:
+        mov di, bx ; di now points to the string to be written, (not the string at the root dir. entry)
+        add di, ax
+
+        push bx
+        push ax
+
+        mov bx, word [ds_offset_on_stack] ; ax = offset to original ds on stack
+        mov ax, word [ss:bx] ; ax = original ds that was pushed by the interrupt handler
+        mov gs, ax
+
+        pop ax
+        pop bx
+
+        movzx cx, byte [gs:di]
+        mov di, dx ; di now points to the string at the root dir. entry
+        add di, ax
+        mov byte [fs:di], cl
+        add ax, 0x0001
+        cmp ax, 0x000B ; (11) in decimal
+        jne .loop_string_bytes
+
+    pop bx
+    pop cx
+    pop dx
+    pop di
+    pop fs
+
+    mov word [dap_offset], reserved_offset
+    mov word [dap_segment], reserved_segment
+    mov word [dap_starting_sector], cx
+    mov word [dap_number_of_sectors], 0x0001
+
+    call write
+
+    mov ax, 0x0001 ; indicating file name modified successfuly
+
+    jmp ireturn
+
+;function no. = 0x15
+;args : [bx = file name address, cx = new cluster number]
+set_root_dir_entry_starting_cluster_number:
+    push bp ; using (bp) to avoid doing too much pushes and pops
+    mov bp, sp
+
+    push cx ; save new cluster number
+    mov ah, ifile_root_directory_entry
+    int 0x21
+
+    add sp, 0x0004
+    cmp ax, 0x0000 ; check if root dir. entry wasn't found
+    je ireturn ; return, & ax = 0
+    sub sp, 0x0004
+
+    push fs
+    push dx
+    push bx
+
+    mov ax, reserved_segment
+    mov fs, ax
+    mov ax, 0x0020 ; (32) in decimal, every root dir. entry = 32 bytes
+    mul dx ; multiply entry index by 32, ax = pointer to first byte of root dir. entry
+    mov bx, ax
+    push cx ; save starting root dir. sector
+    mov cx, word [ss:bp-0x0002] ; cx not contains new cluster number
+    mov word [fs:bx+0x001A], cx ; (26) in decimal, write new cluster number on ram in reserved segment
+    pop cx
+
+    pop bx ; root dir. entry starting fat entry index
+    pop dx ; root dir. entry index in sector
+    pop fs
+
+    mov word [dap_offset], reserved_offset
+    mov word [dap_segment], reserved_segment
+    mov word [dap_starting_sector], cx
+    mov word [dap_number_of_sectors], 0x0001
+    
+    pop cx ; new cluster number
+    pop bp
+    
+    call write
+
+    jmp ireturn
+
 ;-----------------------file loading segment-----------------------
 
-;function no. = 0x13
+;function no. = 0x16
 ;args : [bx = cluster number, cx = loading offset, dx = loading segment]
 load_file_with_cluster_number:
 
@@ -670,7 +833,7 @@ load_file_with_cluster_number:
 
     jmp ireturn
 
-;function no. = 0x14
+;function no. = 0x17
 ;args : [bx = file name address, cx = loading offset, dx = loading segment]
 load_file:
     push cx
@@ -694,7 +857,7 @@ load_file:
 
 ;-----------------------file deletion segment-----------------------
 
-;function no. = 0x15
+;function no. = 0x18
 ;args : [bx = file name address]
 delete_root_dir_entry:
     mov ah, ifile_root_directory_entry
@@ -732,7 +895,7 @@ delete_root_dir_entry:
 
     jmp ireturn
 
-;function no. = 0x16
+;function no. = 0x19
 ;args : [bx = first fat entry index]
 delete_cluster_chain:
 
@@ -754,7 +917,7 @@ delete_cluster_chain:
 
     jmp ireturn
 
-;function no. = 0x17
+;function no. = 0x1A
 ;args : [bx = file name address]
 delete_file:
     mov ah, idelete_root_dir_entry
@@ -771,7 +934,7 @@ delete_file:
 
 ;-----------------------file saving segment-----------------------
 
-;function no. = 0x18
+;function no. = 0x1B
 find_free_root_dir_entry:
 
     push fs
@@ -852,137 +1015,114 @@ find_free_root_dir_entry:
         mov ax, 0x0000 ; indicating no free root dir. entry was found
         jmp ireturn
 
-;function no. = 0x19
-;args : [bx = file name address, cx = sector number, dx = entry index in sector]
-set_root_dir_entry_file_name:
+;function no. = 0x1C
+;args : [bx = any cluster number in the cluster chain to be expanded, cx = number of clusters to add]
+expand_cluster_chain:
+    cmp cx, 0x0000 ; check if no clusters to be added
+    je ireturn
 
-    push fs
-    push di
+    mov ah, ifat_entry_value
+    int 0x21
+
+    cmp ax, 0x0000 ; check if free fat entry
+    je ireturn
+
+    push dx
+    push cx
+    push bx
+
+    mov ah, inumber_of_sectors_per_cluster
+    int 0x21
+
+    mov dx, 0x0000
+    mul cx
+    mov bx, ax ; bx = size of new clusters to be added in sectors
+
+    mov ah, ireserve_free_cluster_chain
+    int 0x21
+
+    add sp, 0x0006 ; remove number of clusters to be added and the original cluster number
+    cmp ax, 0x0000
+    je ireturn
+    sub sp, 0x0006 ; restoring number of clusters to be added and the original cluster number
+
+    mov cx, bx ; cx = first fat entry index (cluster number) in reserved cluster chain
+
+    mov ah, ilast_fat_entry_in_cluster_chain
+    pop bx ; fat entry index in original cluster chain
     push bx
     push cx
-    push dx
-
-    mov ah, iending_root_dir_sector
     int 0x21
 
-    add sp, 0x000A ; (10) in decimal, restore pushed registers
-    cmp cx, ax ; check if the root dir. entry sector number is in the root dir.
-    mov ax, 0x0000 ; indicating file name modification failed
-    jg ireturn
-    sub sp, 0x000A ; (10) in decimal
-
-    mov ah, inumber_of_entries_per_root_dir_sector
+    mov ah, iset_fat_entry_value
+    mov bx, cx
+    pop cx ; first fat entry index (cluster number) in reserved cluster chain
     int 0x21
-
-    add sp, 0x000A ; (10) in decimal, restore pushed registers
-    cmp dx, ax ; check if the root dir. entry index is in any root dir. sector
-    mov ax, 0x0000 ; indicating file name modification failed
-    jg ireturn
-    sub sp, 0x000A ; (10) in decimal
-
-    mov word [dap_offset], reserved_offset
-    mov word [dap_segment], reserved_segment
-    mov word [dap_starting_sector], cx
-    mov word [dap_number_of_sectors], 0x0001
-
-    call read
-
-    mov ax, reserved_segment
-    mov fs, ax
-
-    pop dx
-    push dx
-
-    mov ax, 0x0020 ; (32) in decimal, cause every entry is 32 bytes in fat 16
-    mul dx ; dx now is a pointer to the string at the root dir. entry
-    mov dx, ax ; dx = the offset to fs to the beginning of the current entry
-    mov ax, 0x0000 ; index
-
-    .loop_string_bytes:
-        mov di, bx ; di now points to the string to be written, (not the string at the root dir. entry)
-        add di, ax
-
-        push bx
-        push ax
-
-        mov bx, word [ds_offset_on_stack] ; ax = offset to original ds on stack
-        mov ax, word [ss:bx] ; ax = original ds that was pushed by the interrupt handler
-        mov gs, ax
-
-        pop ax
-        pop bx
-
-        movzx cx, byte [gs:di]
-        mov di, dx ; di now points to the string at the root dir. entry
-        add di, ax
-        mov byte [fs:di], cl
-        add ax, 0x0001
-        cmp ax, 0x000B ; (11) in decimal
-        jne .loop_string_bytes
 
     pop bx
     pop cx
     pop dx
-    pop di
-    pop fs
-
-    mov word [dap_offset], reserved_offset
-    mov word [dap_segment], reserved_segment
-    mov word [dap_starting_sector], cx
-    mov word [dap_number_of_sectors], 0x0001
-
-    call write
-
-    mov ax, 0x0001 ; indicating file name modified successfuly
 
     jmp ireturn
 
-;function no. = 0x1A
-;args : [bx = file name address, cx = new cluster number]
-set_root_dir_entry_starting_cluster_number:
-    push bp ; using (bp) to avoid doing too much pushes and pops
-    mov bp, sp
+;function no. = 0x1D
+;args : [bx = first cluster number, cx = number of fat entries to remove]
+shrink_cluster_chain:
+    cmp cx, 0x0000 ; check if no fat entry to be removed
+    je ireturn
 
-    push cx ; save new cluster number
-    mov ah, ifile_root_directory_entry
+    mov ah, ifat_entry_value
     int 0x21
 
-    add sp, 0x0004
-    cmp ax, 0x0000 ; check if root dir. entry wasn't found
-    je ireturn ; return, & ax = 0
-    sub sp, 0x0004
+    cmp ax, 0xFFFF ; check if only one fat entry in cluster chain, (this routine isn't for deleting, but rather shrinking the cluster chain)
+    je ireturn
 
-    push fs
     push dx
+    push cx
     push bx
 
-    mov ax, reserved_segment
-    mov fs, ax
-    mov ax, 0x0020 ; (32) in decimal, every root dir. entry = 32 bytes
-    mul dx ; multiply entry index by 32, ax = pointer to first byte of root dir. entry
-    mov bx, ax
-    push cx ; save starting root dir. sector
-    mov cx, word [ss:bp-0x0002] ; cx not contains new cluster number
-    mov word [fs:bx+0x001A], cx ; (26) in decimal, write new cluster number on ram in reserved segment
+    mov ax, cx
+    push ax ; removed fat entry index
+
+    .remove_fat_entry:
+        pop ax
+        pop bx
+        pop cx
+        push cx
+        push bx
+        push ax
+
+        ; getting the last cluster number and it's previous cluster number in cluster chain
+        mov ah, ilast_fat_entry_in_cluster_chain
+        int 0x21
+
+        ; setting last cluster number in cluster chain to 0x0000 (free entry)
+        mov ah, iset_fat_entry_value
+        mov bx, cx
+        mov cx, 0x0000
+        int 0x21
+
+        ; setting last cluster number's previous cluster number in cluster chain to 0xFFFF (last entry)
+        mov ah, iset_fat_entry_value
+        mov bx, dx
+        mov cx, 0xFFFF
+        int 0x21
+        
+        pop ax
+        dec ax
+        push ax
+
+        cmp ax, 0x0000 ; checking if removed all fat entries intended to be remove
+        jne .remove_fat_entry
+
+    pop ax
+    pop dx
     pop cx
-
-    pop bx ; root dir. entry starting fat entry index
-    pop dx ; root dir. entry index in sector
-    pop fs
-
-    mov word [dap_offset], reserved_offset
-    mov word [dap_segment], reserved_segment
-    mov word [dap_starting_sector], cx
-    mov word [dap_number_of_sectors], 0x0001
-    
-    pop cx ; new cluster number
-    pop bp
-    
-    call write
+    pop bx
 
     jmp ireturn
 
-;function no. = 0x1B
+;function no. = 0x1E
 ;args : [bx = file size on ram (in sectors)]
 reserve_free_cluster_chain:
     push bp
@@ -992,7 +1132,7 @@ reserve_free_cluster_chain:
     mov bx, 0x0001 ; start after fat entry 1 as fat entries [0,1] are reserved
 
     .first_free_entry:
-        add bx, 0x0001 ; increment fat entry index
+        inc bx ; increment fat entry index
 
         mov ah, ifat_entry_value
         int 0x21
@@ -1004,11 +1144,11 @@ reserve_free_cluster_chain:
     push bx ; save bx to return it as the first entry index in the reserved chain (bp-6)
     push bx ; previous free fat entry index (bp-8)
 
-    cmp word [ss:bp-0x0002], 0x0021 ; (33) in decimal
+    cmp word [ss:bp-0x0002], 0x0021 ; (33) in decimal, checking if file size is less than 1 fat entry (1 fat entry usually represents 32 sectors)
     jl .last_reserved_entry
 
     .loop_fat_entries:
-        add bx, 0x0001
+        inc bx
         cmp bx, 0xFFFF ; check if reached last entry in fat table
         je .not_enough_space
 
@@ -1021,7 +1161,7 @@ reserve_free_cluster_chain:
         mov cx, bx ; new value = current fat entry index
         mov ax, bx
         pop bx ; bx = previous free fat entry index
-        push ax
+        push ax ; current fat entry index
         mov ah, iset_fat_entry_value ; set previous fat entry value to point to current fat entry index
         int 0x21
 
@@ -1033,20 +1173,27 @@ reserve_free_cluster_chain:
         div bx ; divide file size (in sectors)/number of sectors per cluster, 
                ; ax will contain the number of reserved fat entris needed for the file
 
+        cmp dx, 0x0000 ; check if no remainder, so continue without incrementing ax, otherwise increment it
+        je .skip_file_size_normalization
+
+        inc ax ; increment ax since there is a remainder
+
+        .skip_file_size_normalization:
+        pop bx ; current fat entry index
+        push bx
+
         mov cx, word [ss:bp-0x0004] ; number of reserved fat entries
+        inc cx ; increment number of reserved fat entries
+        mov word [ss:bp-0x0004], cx ; change it on the stack
 
         cmp ax, cx ; compare the number of reserved fat entris needed for the file, with number of currently reserved fat entries
         je .last_reserved_entry
 
-        mov cx, word [ss:bp-0x0004] ; number of reserved fat entries
-        add cx, 0x0001 ; increment number of reserved fat entries
-        mov word [ss:bp-0x0004], cx ; change it on the stack
-
         jmp .loop_fat_entries
     
     .last_reserved_entry:
-        pop bx
-        pop ax
+        pop bx ; last free entry index
+        pop ax ; first free fat entry index
         pop cx ; number of reserved fat entries
         pop dx ; file size (in sectors)
         pop bp ; base pointer
@@ -1083,8 +1230,8 @@ reserve_free_cluster_chain:
         mov ax, 0x0000 ; indicating not enough space
         jmp ireturn
 
-;**routine is not in use currently**
-;function no. = 0x1C
+;**routine wasn't tested properly**
+;function no. = 0x1F
 ;args : [bx = first cluster number, si = file starting offset, fs = file starting segment]
 write_cluster_data:
     push bx
@@ -1142,15 +1289,68 @@ write_cluster_data:
         jne write_cluster_data
         jmp ireturn
 
-;**routine is not in use currently**
-; it's purpose is to save changes that took place in a file
-;function no. = 0x1D
+;**routine wasn't tested properly**
+; it's purpose is to save changes that took place in a file, & it's the responsibility of the developers to decide the ending of their program
+; as there is no interrupt routine to calculate the ending segment & offset of the program. "I'm talking as if it's a real OS, who else is
+; going to see this comment other than me"
+
+;function no. = 0x20
 ;args : [bx = file name address, si = file starting offset, fs = file starting segment, di = file ending offset, gs = file ending segment]
-save_file:
+save_file_changes:
+    mov ah, ifile_root_directory_entry
+    int 0x21
+    push bx
+
+    add sp, 0x0002
+    cmp ax, 0x0000
+    je ireturn
+    sub sp, 0x0002
+
+    mov ah, ifile_size_on_driver_in_sectors ; result = ax
+    int 0x21
+
+    push ax ; file size on driver in sectors
+    
+    mov ah, isize_betwenn_segments ; bx = size between segments and offsets in sectors
+    int 0x21
+
+    pop ax ; file size on driver in sectors
+    cmp bx, ax
+    jl .shrink
+    jg .expand
+    je .save_cluster_data
+
+    .expand:
+        mov ah, iexpand_cluster_chain
+        sub bx, ax
+        mov cx, bx
+        pop bx
+        push bx
+        int 0x21
+
+        jmp .save_cluster_data
+
+    .shrink:
+        mov ah, ishrink_cluster_chain
+        sub ax, bx
+        mov cx, ax
+        pop bx
+        push bx
+
+        int 0x21
+
+        jmp .save_cluster_data
+
+    .save_cluster_data:
+        mov ah, iwrite_cluster_data
+        pop bx
+        cmp di, 0x3FFC
+        je read_error
+        int 0x21
 
     jmp ireturn
 
-;function no. = 0x1E
+;function no. = 0x21
 ;args : [bx = fisrt file name offset to ds (to be copied), cx = second file name offset to ds (to be pasted), dl = driver number (to paste to)]
 copy_file:
     push bp
@@ -1334,7 +1534,7 @@ copy_file:
 ; -------------------
 
 ; this function is for programs to exit and come back to the command prompt, & all it does is loads the command prompt and jumps to it
-;function no. = 0x1F
+;function no. = 0x22
 exit_to_cmd:
     mov bx, word [ds_offset_on_stack]
     mov word [ss:bx], 0x0000 ; since it's a special case routine we will need to set the original ds pushed on the stack to 0x0000
@@ -1347,7 +1547,7 @@ exit_to_cmd:
     add sp, 0x0008 ; remove the interrupt pushes + ds
     jmp 0X0000:0x4700
 
-;function no. = 0x20
+;function no. = 0x23
 ;args : [al = driver number (0x80, 0x81, 0x82,....)]
 change_driver_number:
     mov ah, icheck_driver_availability
@@ -1367,14 +1567,13 @@ change_driver_number:
 
     jmp ireturn
 
-;function no. = 0x21
+;function no. = 0x24
 get_current_driver_number:
     mov al, [driver_number]
 
     jmp ireturn
 
-;**routine is currently not in use**
-;function no. = 0x22
+;function no. = 0x25
 ;args : [si = file starting offset, fs = file starting segment, di = file ending offset, gs = file ending segment]
 size_betwenn_segments:
     push cx
@@ -1427,24 +1626,31 @@ size_betwenn_segments:
     add bx, 0x0001
     jmp ireturn
 
-;function no. = 0x23
+;function no. = 0x26
 ;args : [al = driver number]
 check_driver_availability:
+    cmp al, 0x97 ; check if driver letter is one single letter, ex : A,B,...Z, not AA,BF,...ZZ
+    mov al, 0x00 ; indicating driver doesn't exist
+    jg ireturn
+
     push bx
     push dx
     push ax
+
     mov ah, 0x41
     mov bx, 0x55AA
     mov dl, al ; drive to test
     int 0x13
+
     pop ax
     pop dx
     pop bx
+
     jnc ireturn ; carry flag = 0 ; driver does exist
     mov al, 0x00 ; indicating driver doesn't exist
     jmp ireturn ; carry flag = 1 ; driver doesn't exist
 
-;function no. = 0x24
+;function no. = 0x27
 ;args : [bx = first cluster number]
 file_size_on_driver_in_sectors:
     push cx
@@ -1452,6 +1658,7 @@ file_size_on_driver_in_sectors:
     push bx
 
     mov cx, 0x0000
+
     .loop_fat_entries:
         mov ah, ifat_entry_value
         int 0x21
@@ -1459,18 +1666,19 @@ file_size_on_driver_in_sectors:
         mov bx, ax
         cmp bx, 0xFFFF
         jne .loop_fat_entries
+
     ; cx = number of clusters
     mov dx, 0x0000
     mov ah, inumber_of_sectors_per_cluster
     int 0x21
-    mul cx
+    mul cx ; ax = size on driver in sectors
 
     pop bx
     pop dx
     pop cx
     jmp ireturn
 
-;function no. = 0x25
+;function no. = 0x28
 device_power_off:
     mov ax, 0x5301
     xor bx, bx
@@ -1486,7 +1694,7 @@ device_power_off:
     mov cx, 0x0003
     int 0x15
 
-;function no. = 0x26
+;function no. = 0x29
 load_root_dir_at_reserved_segment:
     mov ah, istarting_root_dir_sector
     int 0x21
@@ -1566,4 +1774,5 @@ ireturn:
 ds_offset_on_stack : dw 0x0000
 interrupt_scope : dw 0x0000 ; call an interrupt and it will increment, return from an interrupt and it will decrement
 command_file_string : db "COMMAND BIN"
+snake_file_string : db "SNAKE   BIN"
 driver_number : db 0x80 ; C = 0x80, D = 0x81, E = 0x82,....

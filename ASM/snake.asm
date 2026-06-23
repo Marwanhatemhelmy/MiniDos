@@ -42,7 +42,7 @@ readKey:
     int 0x16
     ret
 
-; waits for keystroke and if key available clears it
+; waits for keystroke and if a key is available it clears it
 removeKey:
     mov ah, 0x00
     int 0x16
@@ -78,9 +78,36 @@ writeScore:
     mov dx, 0x1000
     int 0x10
 
+    mov cx, 0x0000
+    mov ax, [score]
+    .push_string_digits:
+        mov dx, 0x0000
+        mov bx, 0x000A
+        div bx
+
+        add dx, 0x30 ; '0'
+        push dx
+
+        inc cx
+
+        cmp ax, 0x0000
+        jne .push_string_digits
+    
+
+    mov si, 0x0008
+    .write_string_digits:
+        pop bx
+
+        mov byte [scoreString+si], bl
+        inc si
+        dec cx
+
+        cmp cx, 0x0000
+        jne .write_string_digits
+
+
     mov si, scoreString
     call write_string_on_screen
-
     ; restore original cursor coordinates
     pop bx
     mov dl, bl
@@ -340,6 +367,7 @@ placeApple:
     int 0x10
 
 move:
+    call writeScore
     call checkSnakeHit
     call readCursorPosition
     call placeApple
@@ -475,7 +503,7 @@ gameOver:
 
         cmp al, 0x30 ; '0'
         jne waitForRespond
-        mov ah, 0x1F
+        mov ah, 0x22
         int 0x21
     hlt
 
@@ -508,6 +536,7 @@ headCoordinatesOffset : dw 0xFFFE
 growFlag : db 0x00 ; 1 = snake is growing, 0 = snake isn't growing
 appleFlag : db 0x00 ; 1 = apple exists, 0 = apple doesn't exist
 score : dw 0x0000
-scoreString : db 'score : ', 0x00
+scoreString : db 'score :      ', 0x00
 gameOverString : db 'GAME OVER!, if you want to play again press 1 & if you want to exit press 0', 0x00
 seed : dw 0x0000
+snake_file_string : db "SNAKE   BIN", 0x00

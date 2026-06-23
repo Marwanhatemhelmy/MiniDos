@@ -3,6 +3,7 @@
 
 start:
     cli
+
     mov ax, cs
     mov ds, ax
 
@@ -13,7 +14,7 @@ start:
     sti
 
     ; getting current driver number
-    mov ah, 0x21
+    mov ah, 0x24
     int 0x21
 
     sub al, 0x3D ; al = current driver letter
@@ -81,14 +82,21 @@ command_loop:
     jmp .no_keystroke_effect
 
     .enter_press:
-        call start_new_line
-        call excute_command
-        call clear_command_buffer
-        mov byte [commandidx], 0x00
-        call start_new_line
+        call read_cursor_position
+        cmp dh, 0x16 ; check if approaching screen limits
+        jl .before_screen_limit
 
-        mov si, dir_name
-        call write_string_on_screen
+        call clear_screen
+
+        .before_screen_limit:
+            call start_new_line
+            call excute_command
+            call clear_command_buffer
+            mov byte [commandidx], 0x00
+            call start_new_line
+
+            mov si, dir_name
+            call write_string_on_screen
 
     jmp .no_keystroke_effect
 
@@ -390,7 +398,7 @@ excute_command:
     int 0x21
 
     cmp al, 0x01
-    je change_directory
+    je change_driver
 
     ; check if get directories command
     mov dx, get_directories_string
@@ -436,7 +444,7 @@ open_file:
 
     ; loading file at program_segment:program_offset
     mov bx, file_name_buffer
-    mov ah, 0x14
+    mov ah, 0x17
     mov dx, program_segment
     mov cx, program_offset
     int 0x21
@@ -469,7 +477,7 @@ delete_file:
 
     ; deleting the file
     mov bx, file_name_buffer
-    mov ah, 0x17
+    mov ah, 0x1A
     int 0x21
 
     ; checking if file wasn't found
@@ -500,7 +508,7 @@ rename_file:
 
     ; getting first file root dir. entry
     mov bx, file_name_buffer
-    mov ah, 0x12
+    mov ah, 0x13
     int 0x21
     push cx ; save sector number
     push dx ; entry index
@@ -539,7 +547,7 @@ rename_file:
 
     ; getting second file root dir. entry
     mov bx, file_name_buffer
-    mov ah, 0x12
+    mov ah, 0x13
     int 0x21
 
     ; checking if second file already exists
@@ -550,7 +558,7 @@ rename_file:
     sub sp, 0x0004 ; restoring sector number back onto the stack
 
     ; renaming file
-    mov ah, 0x19
+    mov ah, 0x14
     mov bx, file_name_buffer
     pop dx
     pop cx
@@ -579,7 +587,7 @@ copy_file:
     jg write_command_result_message
 
     ; check driver availability
-    mov ah, 0x23
+    mov ah, 0x26
     mov al, byte [bx]
     add al, 0x3D
     mov bl, al ; save driver number in bl
@@ -589,7 +597,7 @@ copy_file:
     push bx ; saving directory number
 
     ; checking if driver isn't available
-    mov si, incorrect_argument_string
+    mov si, driver_not_found_string
     add sp, 0x0002 ; remove driver number
     cmp al, 0x00
     je write_command_result_message
@@ -615,7 +623,7 @@ copy_file:
 
     mov bx, file_name_buffer
     push bx ; first file name
-    mov ah, 0x12
+    mov ah, 0x13
     int 0x21
 
     mov si, file_not_found_string
@@ -654,18 +662,18 @@ copy_file:
     mov cx, ax ; cx = driver number
 
     ; getting original driver number
-    mov ah, 0x21
+    mov ah, 0x24
     int 0x21
 
     push ax ; original driver number
 
     ; changing driver
-    mov ah, 0x20
+    mov ah, 0x23
     mov al, cl
     int 0x21
 
     ; searching for the root dir. entry
-    mov ah, 0x12
+    mov ah, 0x13
     int 0x21
 
     ; checking if second file already exist in the directory that it will be pasted in
@@ -678,20 +686,23 @@ copy_file:
     pop ax ; original driver number
 
     ; changing driver to the original one
-    mov ah, 0x20
+    mov ah, 0x23
     int 0x21
 
     ; --------------copying--------------
 
-    mov ah, 0x1E
+    mov ah, 0x21
     pop cx ; second file name
     pop bx ; first file name
     pop dx ; driectory number
     int 0x21
 
+    mov si, file_copied_successfuly_string
+    call write_command_result_message
+
     ret
 
-change_directory:
+change_driver:
 
     ; getting first argument
     mov al, 0x01
@@ -711,10 +722,10 @@ change_directory:
 
     push bx ; driver number as a letter, 'C', 'D', 'E',.....
 
-    add bx, 0x003D ; (61) in decimal, now bx = driver number, 0x80, 0x81, 0x82,....
+    add bx, 0x003D ; (61) in decimal, now bl = driver number, 0x80, 0x81, 0x82,....
 
     ; check driver availability
-    mov ah, 0x23
+    mov ah, 0x26
     mov al, bl
     int 0x21
 
@@ -722,12 +733,12 @@ change_directory:
 
     pop bx ; driver number as a letter
 
-    mov si, incorrect_argument_string
+    mov si, driver_not_found_string
     cmp al, 0x00 ; check if driver doesn't exist
     je write_command_result_message
 
     ; change directory
-    mov ah, 0x20
+    mov ah, 0x23
     mov al, cl
     int 0x21
 
@@ -741,7 +752,7 @@ change_directory:
     ret
 
 get_directories:
-    mov ah, 0x26
+    mov ah, 0x29
     int 0x21
 
     push ds
@@ -793,7 +804,7 @@ get_directories:
         ret
 
 shut_down:
-    mov ah, 0x25
+    mov ah, 0x28
     int 0x21
 
     mov si, problem_occured_string
@@ -975,13 +986,15 @@ file_name_buffer2 : times 11 db 0x20 ; spare buffer for an eleven bytes file nam
 db 0x00 ; ending of buffer
 command_not_found_string : db "command not found", 0x00
 file_not_found_string : db "file not found", 0x00
+driver_not_found_string : db "driver not found", 0x00
 incorrect_argument_string : db "incorrect argument", 0x00
 file_already_exists_string : db "file already exists", 0x00
 file_deleted_successfuly_string : db "file deleted successfuly", 0x00
 file_renamed_successfuly_string : db "file renamed successfuly", 0x00
+file_copied_successfuly_string : db "file copied successfuly", 0x00
 no_arg_was_parsed_string : db "no argument was parsed", 0x00
 insuffecient_number_of_args_string : db "insuffecient number of arguments", 0x00
 problem_occured_string : db "oops!, it seems like something didn't go well", 0x00
 wellcom : db "  -  ", 0x00
 wellcom2 : db " --- ", 0x00
-wellcom3 : db "----- mini os, developed by Marwan Hatem, all rights are not reserved", 0x00
+wellcom3 : db "----- MiniDos, developed by Marwan Hatem, all rights are not reserved", 0x00
