@@ -487,6 +487,7 @@ gameOver:
     mov byte [vertical], 0x01
     mov byte [horizontal], 0x00
     mov word [score], 0x0000
+    mov dword [scoreString+0x0008], '    '
     mov byte [appleFlag], 0x00
     mov word [tailCoordinatesOffset], 0xFFFE
     mov word [headCoordinatesOffset], 0xFFFE
