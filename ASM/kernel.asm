@@ -1630,8 +1630,10 @@ size_betwenn_segments:
 ;args : [al = driver number]
 check_driver_availability:
     cmp al, 0x97 ; check if driver letter is one single letter, ex : A,B,...Z, not AA,BF,...ZZ
+    mov ah, al ; saving driver number in ah
     mov al, 0x00 ; indicating driver doesn't exist
     jg ireturn
+    mov al, ah ; restoring driver number back in al
 
     push bx
     push dx

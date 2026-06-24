@@ -593,7 +593,7 @@ copy_file:
     mov bl, al ; save driver number in bl
     int 0x21
 
-    mov bh, 0x0000
+    mov bh, 0x00
     push bx ; saving directory number
 
     ; checking if driver isn't available
